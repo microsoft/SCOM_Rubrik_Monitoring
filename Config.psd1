@@ -18,7 +18,7 @@
 		ObjectTypesToExclude = @('WindowsVolumeGroup','ShareFileset')
 		Login = @{
 			UserName = 'Contoso\RubrikAdmin'
-			Password = 'B4ck!tUp12#4'
+			Password = 'password'
 		}
 	}
 }
