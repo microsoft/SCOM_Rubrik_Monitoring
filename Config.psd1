@@ -1,30 +1,24 @@
 @{
 	SCOM = @{
-		ConnectorNode = <NameOfSCOMManagementServer>
+		ConnectorNode = 'SCOMMS-001.Contoso.com'
 
 	}
 	Rubrik =@{
 		ManagedClusters = @(
 			@{
-				id=<UniqueIDForCluster1>
-				server=<IPorFQDNofCluster1>
+				id='RubrikCluster-001'
+				server='RubrikCluster-001.Contoso.com'
 			},
 			@{
-				id=<UniqueIDForCluster2>
-				server=<IPorFQDNofCluster2>
+				id='RubrikCluster-002'
+				server='RubrikCluster-002.Contoso.com'
 			}
 		)
-        SLADomainsToExclude = <ArrayOfStringsOfSLADomainsToExclude>
-        ObjectTypesToExclude = <ArrayOfStringsOfObjectTypesToExclude>
+        SLADomainsToExclude = @('Decommission Pending','Testing Scenarios')
+        ObjectTypesToExclude = @('WindowsVolumeGroup','ShareFileset')
 		Login = @{
-			UserName = <AliasUsedToLoginToRubrik>
-			Password = <ThePasswordForTheAboveLogon>
-		} 
-		<#This can be many things: 
-			-left blank if $SecurityContext is set outside of the script
-			-UserName only set, to have an interactive Get-Credential window pop-up to manually enter in password
-			-Both UserName and Password set to create the PSCredential on execution of script
-			-completely removed to have an interactive logon pop-up at runtime of script
-		#>
+			UserName = 'Contoso\RubrikAdmin'
+			Password = 'B4ck!tUp12#4'
+		}
 	}
 }
