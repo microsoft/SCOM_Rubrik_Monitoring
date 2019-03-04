@@ -591,3 +591,5 @@ Managed by the '$($BackupJob.ClusterName)' ($($BackupJob.ClusterID)) cluster.
     }
 }
 #endregion
+#Copyright (c) Microsoft Corporation. All rights reserved.
+#Licensed under the MIT License.
