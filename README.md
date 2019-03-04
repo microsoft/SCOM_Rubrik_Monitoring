@@ -29,13 +29,13 @@ The config file must also be updated with the proper settings for your environme
 2. DLLDirectory - The directory where the Microsoft.EnterpriseManagement.Common.dll and Microsoft.EnterpriseManagement.OperationsManager.dll are located.
 ### Rubrik
 1. ManagedClusters - This is an array of hash tables, including the id and address for each Rubrik Cluster being monitored. You can manage more than one cluster, but at least one is required, and each must have a unique ID.
-a. id - A unique ID for the Rubrik cluster being managed. This will be the ID of the cluster within SCOM itself
-b. server - The IP address or FQDN of the cluster. This will be used for connecting to the cluster by the script.
+*id - A unique ID for the Rubrik cluster being managed. This will be the ID of the cluster within SCOM itself
+*server - The IP address or FQDN of the cluster. This will be used for connecting to the cluster by the script.
 2. SLADomainsToExclude - This is an array of comma-delimited SLADomains to exclude from BackupJob monitoring. BackupJobs with these SLADomains will be excluded from monitoring.
 3. ObjectTypesToExclude - This is an array of comma-delimited ObjectTypes to exclude from BackupJob monitoring. BackupJobs of these ObjectTypes will be excluded from monitoring.
 4. Login - This is the credential used to connect to the Rubrik clusters. It can be local or domain. If $SecurityConext is populated with a PSCredential before the script is ran, this can be left out of the config completely. If only Username is populated or $SecurityConext is not populated, an interactive logon window will pop-up to enter whatever is missing.
-a. Username - The logon used to logon to Rubrik clusters. If domain credential, 'Domain\Username' will suffice or just 'Username' if local.
-b. Password - The password for the above account. If not included in the config file, an interactive pop-up will open to enter the password for the provided Username
+*Username - The logon used to logon to Rubrik clusters. If domain credential, 'Domain\Username' will suffice or just 'Username' if local.
+*Password - The password for the above account. If not included in the config file, an interactive pop-up will open to enter the password for the provided Username
 
 # Contributing
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
