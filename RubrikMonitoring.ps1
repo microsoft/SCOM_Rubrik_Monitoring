@@ -374,8 +374,11 @@ if ($MonitoredClusters)
             $_ | Add-Member -Name DiskID -Value "$($_.nodeid):$($_.id)" -MemberType NoteProperty
             $RubrikDisks += $_
         }
-        $RubrikClients += (Invoke-RubrikRESTCall -Endpoint 'host' -Method GET ).data
-        $RubrikClients | ForEach-Object {$_ | Add-Member -Name ClusterName -Value $ThisCluster.Name -MemberType NoteProperty}
+        $ThisClustersClients = (Invoke-RubrikRESTCall -Endpoint 'host' -Method GET ).data
+        $ThisClustersClients | ForEach-Object {
+            $_ | Add-Member -Name ClusterName -Value $ThisCluster.Name -MemberType NoteProperty
+            $RubrikClients += $_
+        }
     
         $ProcessJobs = Get-RubrikReport 'SLA Compliance Summary' | Get-RubrikReportData -limit 9999
         foreach ($data in $ProcessJobs.dataGrid) {
@@ -465,7 +468,7 @@ if ($RubrikDisksToAdd)
 Write-Log "Client Discovery Processing"
 $SCOMClientsToRemove = $SCOMClients.Name | Where-Object {$_ -notin $RubrikClients.id}
 Write-Log -HideTime "Found $($SCOMClientsToRemove.count) Clients in SCOM that are no longer managed by Rubrik"
-$RubrikClientsToAdd = $RubrikClients | Where-Object {$_.id -notin ($SCOMClients.Values | Where-Object {$_.Type.Name -eq 'ID'} | Select-Object -ExpandProperty Value)}
+$RubrikClientsToAdd = $RubrikClients | Where-Object {$_.id -notin ($SCOMClients.name)}
 Write-Log -HideTime "Found $($RubrikClientsToAdd.count) Clients in Rubrik that are not yet managed in SCOM"
 if ($SCOMClientsToRemove)
 {
@@ -552,7 +555,7 @@ foreach ($Disk in ($RubrikDisks | Where-Object {$_.DiskId -notin $RubrikDisksToA
 }
 
 Write-Log "Processing Agent States"
-foreach ($Client in ($RubrikClients | Where-Object {$_.id -notin $RubrikClientsToAdd}))
+foreach ($Client in ($RubrikClients | Where-Object {$_.id -notin $RubrikClientsToAdd.id}))
 {
     $SCOMClient = $SCOMClients | Where-Object {$_.DisplayName -eq $Client.id}
     if ($Client.status -ne 'Connected')
