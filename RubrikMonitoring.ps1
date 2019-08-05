@@ -347,6 +347,7 @@ $SCOMClusterNodes = Get-SCOMSDKClassInstance -Class 'Rubrik.CDM.ClusterNode'
 $SCOMDisks = Get-SCOMSDKClassInstance -Class 'Rubrik.CDM.Disk'
 $SCOMClients = Get-SCOMSDKClassInstance -Class 'Rubrik.CDM.RubrikClient'
 $SCOMBackupJobs = Get-SCOMSDKClassInstance -Class 'Rubrik.CDM.BackupJob'
+$WindowsComputers = Get-SCOMSDKClassInstance -Class 'Microsoft.Windows.Computer'
 
 $RubrikClusters = @()
 $RubrikClusterNodes = @()
@@ -380,7 +381,10 @@ if ($MonitoredClusters)
             $RubrikClients += $_
         }
     
-        $ProcessJobs = Get-RubrikReport 'SLA Compliance Summary' | Get-RubrikReportData -limit 9999
+        $json = '{"dataSource":"FrequentDataSource","reportTableRequest":{"sortBy":"ObjectName","sortOrder":"asc","requestFilters":{},"limit":9999}}'
+        $object = ConvertFrom-Json –InputObject $json
+        $ProcessJobs = Invoke-RubrikRESTCall -Endpoint 'report/data_source/table' -api internal -Method POST -Body $object
+
         foreach ($data in $ProcessJobs.dataGrid) {
             $row = @{}
             for ($i=0;$i -lt $data.Count;$i++) {
@@ -391,7 +395,7 @@ if ($MonitoredClusters)
             $RubrikBackupJobs += $row
         }
     }
-    $RubrikBackJobsToExclude = $RubrikBackupJobs | Where-Object {$_.ObjectType -in $ObjectTypesToExclude -or $_.SlaDomain -in $SLADomainsToExclude}
+    $RubrikBackJobsToExclude = $RubrikBackupJobs | Where-Object {$_.Object_Type -in $ObjectTypesToExclude -or $_.Sla_Domain -in $SLADomainsToExclude}
     $RubrikBackupJobs = $RubrikBackupJobs | Where-Object {$_ -notin $RubrikBackJobsToExclude}
 }
 #endregion
@@ -485,8 +489,11 @@ if ($RubrikClientsToAdd)
     }
 }
 
+$SCOMClients = $SCOMClients | Where-Object {$_.Name -notin $SCOMClientsToRemove -or $_.Name -notin $RubrikClientsToAdd}
+
+
 Write-Log "Backup Job Discovery Processing"
-$SCOMBackupJobsToRemove = $SCOMBackupJobs.Name | Where-Object {$_ -notin $RubrikBackupJobs.ObjectId}
+$SCOMBackupJobsToRemove = $SCOMBackupJobs.Name | Where-Object {$_ -notin $RubrikBackupJobs.object_linking_id}
 Write-Log -HideTime "Found $($SCOMBackupJobsToRemove.Count) Backup Jobs in SCOM that are no longer managed by Rubrik"
 if ($SCOMBackupJobsToRemove)
 {
@@ -496,16 +503,17 @@ if ($SCOMBackupJobsToRemove)
     }
 }
 
-$RubrikBackupJobsToAdd = $RubrikBackupJobs | Where-Object {$_.ObjectId -notin $SCOMBackupJobs.Name}
+$RubrikBackupJobsToAdd = $RubrikBackupJobs | Where-Object {$_.object_linking_id -notin $SCOMBackupJobs.Name}
 Write-Log -HideTime "Found $($RubrikBackupJobsToAdd.Count) Backup Jobs in Rubrik that are not yet managed in SCOM"
 if ($RubrikBackupJobsToAdd)
 {
     foreach($RubrikBackupJob in $RubrikBackupJobsToAdd)
     {
-        Set-SCOMSDKDiscovery -Class 'Rubrik.CDM.BackupJob' -Properties @{"ID"=$RubrikBackupJob.ObjectId;"ClusterID"=$RubrikBackupJob.ClusterID;"Type"=$RubrikBackupJob.ObjectType}
+        Set-SCOMSDKDiscovery -Class 'Rubrik.CDM.BackupJob' -Properties @{"ID"=$RubrikBackupJob.object_linking_id;"ClusterID"=$RubrikBackupJob.ClusterID;"Type"=$RubrikBackupJob.Object_Type}
     }
 }
 
+$SCOMBackupJobs = $SCOMBackupJobs | Where-Object {$_.Name -notin $SCOMBackupJobsToRemove -or $_.Name -notin $SCOMBackupJobsToAdd}
 #endregion
 
 #region Monitoring
@@ -555,42 +563,129 @@ foreach ($Disk in ($RubrikDisks | Where-Object {$_.DiskId -notin $RubrikDisksToA
 }
 
 Write-Log "Processing Agent States"
-foreach ($Client in ($RubrikClients | Where-Object {$_.id -notin $RubrikClientsToAdd.id}))
+$ClientsStillHealthy = 0
+$ClientsStillUnhealthy = 0
+$ClientsInMaintenance = 0
+foreach ($Client in $SCOMClients )
 {
-    $SCOMClient = $SCOMClients | Where-Object {$_.DisplayName -eq $Client.id}
-    if ($Client.status -ne 'Connected')
+    $RubrikClient = $RubrikClients | Where-Object {$_.id -eq $Client.Name}
+    $WindowsComputer = $WindowsComputers | Where-Object { $_.name -eq $RubrikClient.name}
+    If ($RubrikClient)
     {
-        Write-Log -HideTime "'$($Client.id)' isn't Connected. Triggering an alert."
-        Write-SCOMSDKCustomEvent -TargetClass $SCOMClient -Source "RubrikCDM" -EventID 101 -Level Error -Message @"
-The Rubrik Client on '$($Client.hostname)' isn't checking in. It's managed by the '$($Client.ClusterName) ($($Client.primaryClusterID))' cluster. Please ensure the client is installed/running.
-It's Rubrik ID is: '$($Client.id)'
+        if (!($WindowsComputer.InMaintenanceMode))
+        {
+            if ($Client.HealthState -eq 'Success')
+            {
+                if ($RubrikClient.status -eq 'Disconnected')
+                {
+                    Write-Log -HideTime "     '$($Client.Name)' is Disconnected."
+                    $AlertMessage = @"
+The Rubrik Client on '$($RubrikClient.hostname)' isn't checking in. Please ensure the client is installed/running.
+Additional Details:
+Client ID: $($RubrikClient.Id)
+Rubrik Cluster: $($RubrikClient.ClusterName)            
 "@
+                    If ($WindowsComputer)
+                    {
+                        $AlertMessage += @"
+WindowsComputer: $($WindowsComputer.Name)
+"@              
+                    }
+                    Write-SCOMSDKCustomEvent -TargetClass $Client -Source "RubrikCDM" -EventID 101 -Level Error -Message $AlertMessage
+                }
+                else
+                {
+                    $ClientsStillHealthy++
+                }
+            }
+            else
+            {
+                if ($RubrikClient.status -eq 'Connected')
+                {
+                    Write-Log -HideTime "     '$($Client.Name)' is now Connected."
+                    Write-SCOMSDKCustomEvent -TargetClass $Client -Source "RubrikCDM" -EventID 100 -Level Information
+                }
+                else
+                {
+                    $ClientsStillUnhealthy++
+                }
+            }
+        }
+        else 
+        {
+            Write-Log -HideTime "     Unable to associate a Rubrik Client for '$($Client.Name)' Skipping it this passs."
+        }
     }
     else
     {
-        Write-SCOMSDKCustomEvent -TargetClass $SCOMClient -Source "RubrikCDM" -EventID 100 -Level Information
+        $ClientsInMaintenance++
+        if ($Client.HealthState -ne 'Success')
+        {
+            Write-Log -HideTime "     '$($Client.Name)' is in maintenance. Clearing desynced alert"
+            Write-SCOMSDKCustomEvent -TargetClass $SCOMClient -Source "RubrikCDM" -EventID 100 -Level Information
+        }
     }
 }
+Write-Log "$ClientsInMaintenance Clients in Maintenance Mode."
+Write-Log "$ClientsStillHealthy Clients Healthy with no state change."
+Write-Log "$ClientsStillUnhealthy Clients Unhealthy with no state change."
 
 Write-Log "Processing Backup Jobs"
-foreach ($BackupJob in ($RubrikBackupJobs | Where-Object {$_.ObjectID -notin $RubrikBackupJobsToAdd.ObjectID}))
+$BackJobsStillHealthy = 0
+$BackJobsStillUnhealthy = 0
+foreach ($BackupJob in $SCOMBackupJobs )
 {
-    $SCOMBackupJob = $SCOMBackupJobs | Where-Object {$_.DisplayName -eq $BackupJob.ObjectId}
-    if ($BackupJob.ComplianceStatus -eq 'NonCompliance')
+    $RubrikBackupJob = $RubrikBackupJobs | Where-Object {$_.object_linking_id -eq $BackupJob.Name}
+    $WindowsComputer = $WindowsComputers | Where-Object { $_.name -match $RubrikBackupJob.Location.trim('\\').split('\')[0] }
+    if ($RubrikBackupJob)
     {
-        Write-Log -HideTime "'$($BackupJob.ObjectId)' is out of Compliance for its SLA. Triggering an alert."
-        Write-SCOMSDKCustomEvent -TargetClass $SCOMBackupJob -Source "RubrikCDM" -EventID 101 -Level Error -Message @"
-The SLA of the '$($BackupJob.ObjectName)' Backup Job is currently "Out of Compliance".
-It is a '$($BackupJob.ObjectType)' Job running against the '$($BackupJob.Location)' client.
-It has the following SLA set: "$($BackupJob.SlaDomain)", which is currently "$($BackupJob.SlaDomainState)".
+        if ($BackupJob.HealthState -eq 'Success')
+        {
+            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'NonCompliance')
+            {
+                $AlertMessage = @"
+The SLA of the '$($RubrikBackupJob.Object_Name)' Backup Job is currently "Out of Compliance".
+It is a '$($RubrikBackupJob.Object_Type)' Job running against the '$($RubrikBackupJob.Location)' client.
+It has the following SLA set: "$($RubrikBackupJob.Sla_Domain)", which is currently "$($RubrikBackupJob.Sla_Domain_State)".
 Additional Details:
-BackupJob ID: $($BackupJob.ObjectId)
-Managed by the '$($BackupJob.ClusterName)' ($($BackupJob.ClusterID)) cluster.
+BackupJob ID: $($RubrikBackupJob.ObjectId)
+Managed by the '$($RubrikBackupJob.ClusterName)' ($($RubrikBackupJob.ClusterID)) cluster.
 "@
+                If ($WindowsComputer)
+                {
+                    $AlertMessage += @"
+WindowsComputer: $($WindowsComputer.Name)
+"@              
+                }
+                Write-Log -HideTime "     '$($BackupJob.Name)' is out of Compliance for its SLA."
+                Write-SCOMSDKCustomEvent -TargetClass $BackupJob -Source "RubrikCDM" -EventID 101 -Level Error -Message $AlertMessage
+            }
+            else
+            { 
+                $BackJobsStillHealthy++
+            }
+        }
+        else
+        {
+            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'InCompliance')
+            {
+                Write-Log -HideTime "     '$($BackupJob.Name)' is now in compliance for its SLA."
+                Write-SCOMSDKCustomEvent -TargetClass $BackupJob -Source "RubrikCDM" -EventID 100 -Level Information
+                $BackJobAlertsResolved++
+            }
+            else
+            {
+                 $BackJobsStillUnhealthy++
+            }
+        }
     }
     else
     {
-        Write-SCOMSDKCustomEvent -TargetClass $SCOMBackupJob -Source "RubrikCDM" -EventID 100 -Level Information
+        Write-Log -HideTime "       No Rubrik Backup Job found for '$($BackupJob.Name)'."
     }
+    
+    
 }
+Write-Log "$BackJobsStillHealthy Backup Jobs Healthy with no state change."
+Write-Log "$BackJobsStillUnhealthy Backup Job Alerts with no state change."
 #endregion
