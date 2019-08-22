@@ -513,7 +513,7 @@ if ($RubrikBackupJobsToAdd)
     }
 }
 
-$SCOMBackupJobs = $SCOMBackupJobs | Where-Object {$_.Name -notin $SCOMBackupJobsToRemove -or $_.Name -notin $SCOMBackupJobsToAdd}
+$SCOMBackupJobs = $SCOMBackupJobs | Where-Object {$_.Name -notin $SCOMBackupJobsToRemove -and $_.Name -notin $SCOMBackupJobsToAdd}
 #endregion
 
 #region Monitoring
@@ -622,7 +622,7 @@ WindowsComputer: $($WindowsComputer.Name)
         if ($Client.HealthState -ne 'Success')
         {
             Write-Log -HideTime "     '$($Client.Name)' is in maintenance. Clearing desynced alert"
-            Write-SCOMSDKCustomEvent -TargetClass $SCOMClient -Source "RubrikCDM" -EventID 100 -Level Information
+            Write-SCOMSDKCustomEvent -TargetClass $Client -Source "RubrikCDM" -EventID 100 -Level Information
         }
     }
 }
@@ -636,12 +636,17 @@ $BackJobsStillUnhealthy = 0
 foreach ($BackupJob in $SCOMBackupJobs )
 {
     $RubrikBackupJob = $RubrikBackupJobs | Where-Object {$_.object_linking_id -eq $BackupJob.Name}
-    $WindowsComputer = $WindowsComputers | Where-Object { $_.name -match $RubrikBackupJob.Location.trim('\\').split('\')[0] }
+    if ($RubrikBackupJob.Location){
+        $WindowsComputer = $WindowsComputers | Where-Object { $_.name -match $RubrikBackupJob.Location.trim('\\').split('\')[0] }
+    }
+    else{
+
+    }
     if ($RubrikBackupJob)
     {
         if ($BackupJob.HealthState -eq 'Success')
         {
-            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'NonCompliance')
+            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'NonCompliance' -and $RubrikBackupJob.current_task_status -ne 'Running')
             {
                 $AlertMessage = @"
 The SLA of the '$($RubrikBackupJob.Object_Name)' Backup Job is currently "Out of Compliance".
@@ -667,7 +672,7 @@ WindowsComputer: $($WindowsComputer.Name)
         }
         else
         {
-            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'InCompliance')
+            if ($RubrikBackupJob.snapshot_24_hour_status -eq 'InCompliance' -or $RubrikBackupJob.current_task_status -eq 'Running')
             {
                 Write-Log -HideTime "     '$($BackupJob.Name)' is now in compliance for its SLA."
                 Write-SCOMSDKCustomEvent -TargetClass $BackupJob -Source "RubrikCDM" -EventID 100 -Level Information
